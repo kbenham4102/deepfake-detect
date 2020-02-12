@@ -3,7 +3,7 @@ import cv2
 import pandas as pd
 # from tensorflow.image import resize, transpose, random_flip_up_down, random_flip_left_right, random_brightness, random_contrast, random_crop
 import tensorflow as tf
-import sys
+import math
 
 def get_frames(filepath):
     '''
@@ -109,7 +109,7 @@ def load_transform_batch(paths,
         # Some videos are cut at 298 frames so going with that
         # as the standard
         vid = get_frames(p)[:298,:,:,:]
-        vid = tf.image.resize_with_pad(vid, resize_shape[0], resize_shape[1])
+        vid = tf.image.resize(vid, size=resize_shape)
         vid = normalize(vid, chan_means, chan_std_dev)
         # Add more augmentations on load in below here
         #
@@ -123,7 +123,27 @@ def load_transform_batch(paths,
     return tf.stack(batch)
     
 
+class DeepFakeDataSeq(tf.keras.utils.Sequence):
 
+
+    # Pass in two lists, one of filename paths for X, labels
+    # for y and then batch_size
+    def __init__(self, x_set, y_set, batch_size):
+            self.x, self.y = x_set, y_set
+            self.batch_size = batch_size
+    
+    def __len__(self):
+            return math.ceil(len(self.x) / self.batch_size)
+
+    def __getitem__(self, idx):
+            batch_x = self.x[idx * self.batch_size:(idx + 1) *
+            self.batch_size]
+            batch_y = self.y[idx * self.batch_size:(idx + 1) *
+            self.batch_size]
+
+
+            batch_x_loaded = load_transform_batch([fn for fn in batch_x])
+            return (batch_x_loaded, tf.Tensor(batch_y))
 
 
 
@@ -135,7 +155,13 @@ def main():
 
     df = load_process_train_targets(meta_path, train_path)
 
-    batch = load_transform_batch(df.filepath[:batch_sz])
+    #batch = load_transform_batch(df.filepath[:batch_sz])
+
+    #print(batch)
+
+    data = DeepFakeDataSeq(df.filepath.to_list(), df.target_class.to_list(), 10)
+
+    print(data.__getitem__(0))
 
     
 
