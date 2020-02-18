@@ -3,7 +3,7 @@ from tensorflow.keras import models, layers
 import pandas as pd
 from datetime import datetime
 from utils import *
-
+import gc
 
 
 def model(input_dim):
@@ -37,25 +37,51 @@ def model(input_dim):
     return model
 
 
-def train_validate(train_label_path, train_path, test_path, batch_size, input_shape):
+def train(data, batch_size = 1, epochs = 1, input_shape = (1,300,300,300,3)):
+    
 
-    df = load_process_train_targets(train_label_path, train_path)
+    clf_model = model(input_shape)
 
 
-    data = DeepFakeDataSeq(df.filepath.to_list(), df.target_class.to_list(), batch_size)
+    clf_model.compile(
+        optimizer='sgd',
+        loss=tf.keras.losses.BinaryCrossentropy(),
+        metrics=[tf.metrics.AUC(), 'binary_crossentropy', 'binary_accuracy'])
 
-    model = model()
 
-    model.fit(
+    clf_model.fit(
         x = data,
-        epochs = 1,
+        epochs=epochs,
         verbose=2,
-        validation_split=0.1
-        validation_freq=[1,2,10]
-        max_queue_size=16,
-        workers=4
-        use_multiprocessing=True
+        # validation_split=0.1,
+        # validation_freq=[1,2,10],
+        # max_queue_size=10,
+        # workers=4,
+        use_multiprocessing=False
     )
+    return clf_model
 
 if __name__=="__main__":
+
+    # Define some params
+    epochs=1
+    batch_size=1
+    train_label_path = '../data/source/labels/train_meta.json'
+    train_path = '../data/source/train/'
+
+    # Get input dims from a single image
+    d = load_transform_batch([train_path + 'acxwigylke.mp4']).shape
+    print('Inputs have dims of ', d[1:])
+    gc.collect()
+
+
+    df = load_process_train_targets(train_label_path, train_path)
+    data = DeepFakeDataSeq(df.filepath.to_list(), df.target_class.to_list(), batch_size)
+
+    clf_trained = train(data, batch_size=batch_size, epochs=epochs, input_shape=d[1:])
+    # TODO make the custom training protocol in tensorflow, 
+    # enforce data loading on cpu and training run on gpu, 
+    # make sure gpu stays clear and healthy
+    # 1080Ti should be able to handle ~550 frames at a time.
+
     

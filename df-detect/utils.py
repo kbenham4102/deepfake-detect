@@ -89,7 +89,8 @@ def normalize(video, chan_means, chan_std_dev):
 def load_transform_batch(paths, 
                          chan_means=[0.485, 0.456, 0.406], 
                          chan_std_dev = [0.229, 0.224, 0.225], 
-                         resize_shape=(300,300)):
+                         resize_shape=(300,300),
+                         seq_length=298):
     """[summary]
     
     Arguments:
@@ -106,19 +107,20 @@ def load_transform_batch(paths,
 
     batch = []
     for p in paths:
-        # Some videos are cut at 298 frames so going with that
-        # as the standard
-        vid = get_frames(p)[:298,:,:,:]
-        vid = tf.image.resize(vid, size=resize_shape)
+        # On Acer predator, max size for prediction is 100 frames, 
+        # randomly selecting that interval
+        # Don't want to exceed frames, available, using 198 as limit
+        if seq_length == 298:
+            start = 0
+        else:
+            start = np.random.randint(298 - seq_length)
+        vid = get_frames(p)[start:(start+seq_length),:,:,:]
+        vid = tf.image.resize(vid, size=resize_shape).numpy()
         vid = normalize(vid, chan_means, chan_std_dev)
         # Add more augmentations on load in below here
         #
         #
         batch.append(vid)
-        print(p)
-        print(vid.shape)
-
-    print("Batch length is ", len(paths))
 
     return tf.stack(batch)
     
@@ -128,22 +130,27 @@ class DeepFakeDataSeq(tf.keras.utils.Sequence):
 
     # Pass in two lists, one of filename paths for X, labels
     # for y and then batch_size
-    def __init__(self, x_set, y_set, batch_size):
+    def __init__(self, x_set, y_set, batch_size, resize_shape=(300,300), sequence_len=298):
             self.x, self.y = x_set, y_set
             self.batch_size = batch_size
+            self.resize_shape = resize_shape
+            self.sequence_len = sequence_len
     
     def __len__(self):
             return math.ceil(len(self.x) / self.batch_size)
 
     def __getitem__(self, idx):
-            batch_x = self.x[idx * self.batch_size:(idx + 1) *
-            self.batch_size]
-            batch_y = self.y[idx * self.batch_size:(idx + 1) *
-            self.batch_size]
+        
+        batch_x = self.x[idx * self.batch_size:(idx + 1) *
+        self.batch_size]
+        batch_y = self.y[idx * self.batch_size:(idx + 1) *
+        self.batch_size]
 
 
-            batch_x_loaded = load_transform_batch([fn for fn in batch_x])
-            return (batch_x_loaded, tf.Tensor(batch_y))
+        batch_x_loaded = load_transform_batch([fn for fn in batch_x], 
+                                                resize_shape=self.resize_shape,
+                                                seq_length=self.sequence_len)
+        return (batch_x_loaded, tf.constant([batch_y]))
 
 
 
@@ -151,7 +158,6 @@ def main():
     meta_path = '../data/source/labels/train_meta.json'
     # TODO make the apply method for os.path.join
     train_path = '../data/source/train/'
-    batch_sz = 10
 
     df = load_process_train_targets(meta_path, train_path)
 
@@ -159,11 +165,11 @@ def main():
 
     #print(batch)
 
-    data = DeepFakeDataSeq(df.filepath.to_list(), df.target_class.to_list(), 10)
+    data = DeepFakeDataSeq(df.filepath.to_list(), df.target_class.to_list(), 2)
 
-    print(data.__getitem__(0))
+    x,y = data.__getitem__(0)
 
-    
+    print(y)    
 
 if __name__ == "__main__":
     main()
