@@ -1,4 +1,4 @@
-data/*
+data/source/
 *.ipynb_checkpoints
 .cache/*
 tests/__pycache__/
