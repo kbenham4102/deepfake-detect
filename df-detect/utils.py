@@ -108,7 +108,7 @@ def load_transform_batch(paths,
     batch = []
     for p in paths:
         # On Acer predator, max size for prediction is 100 frames, 
-        # randomly selecting that interval
+        # randomly selecting interval
         # Don't want to exceed frames, available, using 198 as limit
         if seq_length == 298:
             start = 0

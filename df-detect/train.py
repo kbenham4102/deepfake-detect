@@ -117,13 +117,13 @@ if __name__ == "__main__":
 
     # Get device names
     # Note this is for tf 2.1 when upgrading
-    # print(tf.config.experimental.list_physical_devices('CPU')[0].name)
-    # print(x.name for x in tf.config.experimental.list_physical_devices('GPU'))
-    devs = tf.config.experimental_list_devices()
-    cpu = devs[0]
-    gpu = devs[-1]
-    print("Found CPU at ", cpu)
-    print("Found GPU at ", gpu)
+    print(tf.config.experimental.list_physical_devices('CPU')[0].name)
+    print(x[0].name for x in tf.config.experimental.list_physical_devices('GPU'))
+    # devs = tf.config.experimental_list_devices()
+    # cpu = devs[0]
+    # gpu = devs[-1]
+    # print("Found CPU at ", cpu)
+    # print("Found GPU at ", gpu)
 
     # Run an input test to get a model summary
     # Get input dims from a single image
@@ -163,16 +163,16 @@ if __name__ == "__main__":
     num_test_batches = np.ceil(X_test_len/batch_size)
 
     # Define model and get structure within distribution strategy
-    #with strategy.scope():
-    model = DeepFakeDetector()
-    model.build_graph(test_dims)
-    # Loss object
-    loss_object = tf.keras.losses.BinaryCrossentropy()
+    with strategy.scope():
+        model = DeepFakeDetector()
+        model.build_graph(test_dims)
+        # Loss object
+        loss_object = tf.keras.losses.BinaryCrossentropy()
 
-    # Optimizer
-    optimizer = tf.keras.optimizers.SGD()
-    # Compile the model under the strategy scope
-    model.compile(optimizer=optimizer, loss=loss_object, metrics=['accuracy'])
+        # Optimizer
+        optimizer = tf.keras.optimizers.SGD()
+        # Compile the model under the strategy scope
+        model.compile(optimizer=optimizer, loss=loss_object, metrics=['accuracy'])
 
     
     print(model.summary())
@@ -189,12 +189,12 @@ if __name__ == "__main__":
     ]
 
 
-    history = model.fit_generator(train_data, 
-                                  epochs=EPOCHS, 
-                                  steps_per_epoch=10, 
-                                  callbacks=callbacks,
-                                  validation_data=test_data, 
-                                  validation_steps=10, 
-                                  )
+    history = model.fit(train_data, 
+                        epochs=EPOCHS, 
+                        steps_per_epoch=10, 
+                        callbacks=callbacks,
+                        validation_data=test_data, 
+                        validation_steps=10, 
+                        )
     
 
