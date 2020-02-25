@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 import sys
 
 # Set some logging information
-tf.debugging.set_log_device_placement(True)
+# tf.debugging.set_log_device_placement(True)
 
 
 class DeepFakeDetector(tf.keras.Model):
@@ -83,6 +83,22 @@ class CollectBatchStats(tf.keras.callbacks.Callback):
         self.batch_acc.append(logs['accuracy'])
         self.model.reset_metrics()
 
+
+# Callback for printing the LR at the end of each epoch.
+class PrintLR(tf.keras.callbacks.Callback):
+  def on_epoch_end(self, epoch, logs=None):
+    print('\nLearning rate for epoch {} is {}'.format(epoch + 1,
+                                                      model.optimizer.lr.numpy()))
+
+def decay(epoch):
+  if epoch < 3:
+    return 1e-3
+  elif epoch >= 3 and epoch < 7:
+    return 1e-4
+  else:
+    return 1e-5
+
+
 if __name__ == "__main__":
 
     # Define some params
@@ -92,15 +108,17 @@ if __name__ == "__main__":
     test_fraction = 0.2
     train_label_path = '../data/source/labels/train_meta.json'
     train_path = '../data/source/train/'
+    checkpoint_prefix = 'models/ckpt_{epoch}'
     resize_shape = (224,224)
     sequence_len = 16
-
+    n_workers = 1
+    use_mult_prc = False
 
 
     # Get device names
     # Note this is for tf 2.1 when upgrading
     # print(tf.config.experimental.list_physical_devices('CPU')[0].name)
-    # print(tf.config.experimental.list_physical_devices('GPU')[0].name)
+    # print(x.name for x in tf.config.experimental.list_physical_devices('GPU'))
     devs = tf.config.experimental_list_devices()
     cpu = devs[0]
     gpu = devs[-1]
@@ -114,19 +132,10 @@ if __name__ == "__main__":
                                         seq_length=sequence_len).shape
     print('Inputs have dims of ', test_dims[1:])
 
-    # Define model and get structure
-    model = DeepFakeDetector()
-    model.build_graph(test_dims)
-    print(model.summary())
 
-    # Define something to keep the callbacks for plot gen
-    batch_stats_callback = CollectBatchStats()
+    strategy = tf.distribute.MirroredStrategy()
 
-    # Loss object
-    loss_object = tf.keras.losses.BinaryCrossentropy()
 
-    # Optimizer
-    optimizer = tf.keras.optimizers.SGD()
 
     # test_loss = tf.keras.metrics.Mean(name='test_loss')
     # test_auc = tf.keras.metrics.AUC()
@@ -149,11 +158,43 @@ if __name__ == "__main__":
                                 resize_shape=resize_shape, 
                                 sequence_len=sequence_len)
     X_len = len(train_df.filepath)
+    X_test_len = len(test_df.filepath)
     num_train_batches = int(np.ceil(X_len/batch_size))
-    # num_test_batches = np.ceil(X_test_len/batch_size)
+    num_test_batches = np.ceil(X_test_len/batch_size)
 
+    # Define model and get structure within distribution strategy
+    #with strategy.scope():
+    model = DeepFakeDetector()
+    model.build_graph(test_dims)
+    # Loss object
+    loss_object = tf.keras.losses.BinaryCrossentropy()
+
+    # Optimizer
+    optimizer = tf.keras.optimizers.SGD()
+    # Compile the model under the strategy scope
     model.compile(optimizer=optimizer, loss=loss_object, metrics=['accuracy'])
 
-    history = model.fit_generator(data, epochs=EPOCHS, steps_per_epoch=num_train_batches, callbacks=[batch_stats_callback])
+    
+    print(model.summary())
+
+    # Define something to keep the callbacks for plot gen
+    batch_stats_callback = CollectBatchStats()
+
+    callbacks = [
+    tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_prefix,
+                                       save_weights_only=True),
+    tf.keras.callbacks.LearningRateScheduler(decay),
+    PrintLR(), 
+    batch_stats_callback
+    ]
+
+
+    history = model.fit_generator(train_data, 
+                                  epochs=EPOCHS, 
+                                  steps_per_epoch=10, 
+                                  callbacks=callbacks,
+                                  validation_data=test_data, 
+                                  validation_steps=10, 
+                                  )
     
 
