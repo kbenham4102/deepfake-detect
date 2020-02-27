@@ -129,3 +129,6 @@ if __name__ == "__main__":
     for vid, label in vid_ds.take(3):
         print(label)
         print(vid.shape)
+    batched = vid_ds.batch(3)
+
+    
