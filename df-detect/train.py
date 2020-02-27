@@ -118,12 +118,7 @@ if __name__ == "__main__":
     # Get device names
     # Note this is for tf 2.1 when upgrading
     print(tf.config.experimental.list_physical_devices('CPU')[0].name)
-    print(x[0].name for x in tf.config.experimental.list_physical_devices('GPU'))
-    # devs = tf.config.experimental_list_devices()
-    # cpu = devs[0]
-    # gpu = devs[-1]
-    # print("Found CPU at ", cpu)
-    # print("Found GPU at ", gpu)
+    print([x[0] for x in tf.config.experimental.list_physical_devices('GPU')])
 
     # Run an input test to get a model summary
     # Get input dims from a single image
@@ -133,46 +128,27 @@ if __name__ == "__main__":
     print('Inputs have dims of ', test_dims[1:])
 
 
-    strategy = tf.distribute.MirroredStrategy()
+    #strategy = tf.distribute.MirroredStrategy()
 
+    #TODO define new dataloading strategy and get appropriate batch lengths
+    # see https://www.tensorflow.org/guide/data#simple_batching
 
-
-    # test_loss = tf.keras.metrics.Mean(name='test_loss')
-    # test_auc = tf.keras.metrics.AUC()
-    # test_acc = tf.keras.metrics.BinaryAccuracy()
-
-    # Load train filepaths into a dataframe
-    df = load_process_train_targets(train_label_path, train_path)
-
-    # Split those according to train test split
-    train_df, test_df = train_test_split(df, test_size=test_fraction)
-
-    train_data = DeepFakeDataSeq(train_df.filepath.to_list(), 
-                                 train_df.target_class.to_list(), 
-                                 batch_size, 
-                                 resize_shape=resize_shape, 
-                                 sequence_len=sequence_len)
-    test_data = DeepFakeDataSeq(test_df.filepath.to_list(), 
-                                test_df.target_class.to_list(), 
-                                batch_size, 
-                                resize_shape=resize_shape, 
-                                sequence_len=sequence_len)
     X_len = len(train_df.filepath)
     X_test_len = len(test_df.filepath)
     num_train_batches = int(np.ceil(X_len/batch_size))
-    num_test_batches = np.ceil(X_test_len/batch_size)
+    num_test_batches = int(np.ceil(X_test_len/batch_size))
 
     # Define model and get structure within distribution strategy
-    with strategy.scope():
-        model = DeepFakeDetector()
-        model.build_graph(test_dims)
-        # Loss object
-        loss_object = tf.keras.losses.BinaryCrossentropy()
+    # with strategy.scope():
+    model = DeepFakeDetector()
+    model.build_graph(test_dims)
+    # Loss object
+    loss_object = tf.keras.losses.BinaryCrossentropy()
 
-        # Optimizer
-        optimizer = tf.keras.optimizers.SGD()
-        # Compile the model under the strategy scope
-        model.compile(optimizer=optimizer, loss=loss_object, metrics=['accuracy'])
+    # Optimizer
+    optimizer = tf.keras.optimizers.SGD()
+    # Compile the model under the strategy scope
+    model.compile(optimizer=optimizer, loss=loss_object, metrics=['accuracy'])
 
     
     print(model.summary())
@@ -191,10 +167,10 @@ if __name__ == "__main__":
 
     history = model.fit(train_data, 
                         epochs=EPOCHS, 
-                        steps_per_epoch=10, 
+                        steps_per_epoch=num_train_batches, 
                         callbacks=callbacks,
                         validation_data=test_data, 
-                        validation_steps=10, 
+                        validation_steps=num_test_batches, 
                         )
-    
+
 

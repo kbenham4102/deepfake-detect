@@ -145,34 +145,14 @@ class DeepFakeDataSeq(tf.keras.utils.Sequence):
         self.batch_size]
         batch_y = self.y[idx * self.batch_size:(idx + 1) *
         self.batch_size]
-
+        print("Loading batch ", idx)
 
         batch_x_loaded = load_transform_batch([fn for fn in batch_x], 
                                                 resize_shape=self.resize_shape,
                                                 seq_length=self.sequence_len)
-        return (batch_x_loaded, tf.constant([batch_y]))
+        return (batch_x_loaded, tf.constant([batch_y]), [None])
 
 
-
-def main():
-    meta_path = '../data/source/labels/train_meta.json'
-    # TODO make the apply method for os.path.join
-    train_path = '../data/source/train/'
-
-    df = load_process_train_targets(meta_path, train_path)
-
-    #batch = load_transform_batch(df.filepath[:batch_sz])
-
-    #print(batch)
-
-    data = DeepFakeDataSeq(df.filepath.to_list(), df.target_class.to_list(), 2)
-
-    x,y = data.__getitem__(0)
-
-    print(y)    
-
-if __name__ == "__main__":
-    main()
 
 
 
