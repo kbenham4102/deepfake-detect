@@ -59,10 +59,10 @@ def load_process_train_targets(meta_path, train_path, return_df = True):
         [type] -- [description]
     """
 
-    df = pd.read_json(meta_path, orient='index').reset_index()
+    df = pd.read_json(meta_path)
     df['target_class'] = (df['label'] == 'FAKE').astype('float')
     df['filepath'] = train_path + df['index']
-    df.drop(['index', 'split', 'original', 'label'], axis=1, inplace=True)
+    df.drop(['index', 'original', 'label'], axis=1, inplace=True)
     df.to_csv(meta_path + 'paths_labels.csv', header=True)
 
     if return_df == True:
@@ -108,13 +108,13 @@ def load_transform_batch(paths,
     batch = []
     for p in paths:
         # On Acer predator, max size for prediction is 100 frames, 
-        # randomly selecting interval
-        # Don't want to exceed frames, available, using 198 as limit
-        if seq_length == 298:
-            start = 0
-        else:
-            start = np.random.randint(298 - seq_length)
-        vid = get_frames(p)[start:(start+seq_length),:,:,:]
+        # Don't want to exceed frames, available
+
+        vid = get_frames(p)
+        n_frames = vid.shape[0]
+        
+        start = np.random.randint(n_frames - seq_length)
+        vid = vid[start:(start+seq_length),:,:,:]
         vid = tf.image.resize(vid, size=resize_shape).numpy()
         vid = normalize(vid, chan_means, chan_std_dev)
         # Add more augmentations on load in below here
