@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras.layers import ConvLSTM2D, Conv3D, Conv2D, Flatten, Dense, BatchNormalization
 
-class DeepFakeDetector(tf.keras.Model):
+class DeepFakeDetector7IK(tf.keras.Model):
     def __init__(self):
         super(DeepFakeDetector, self).__init__()
         self.seq_det1 = ConvLSTM2D(32, (3,3), strides=(1,1), 

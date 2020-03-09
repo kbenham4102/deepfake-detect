@@ -170,3 +170,25 @@ if __name__== "__main__":
     print("saved new json file ", json_loc)
 
     sort_deepfake_train_examples(download_folder, args.im_sort_path, json_loc, test_split=args.train_val_split)
+
+
+def re_sort(fraction, mode = 'val'):
+
+    if mode == 'val':
+        l = glob.glob('../data/source/train_val_sort/val/*/*.mp4')
+    elif mode == 'train':
+        l = glob.glob('../data/source/train_val_sort/train/*/*.mp4')
+    mod_no = int(1/fraction)
+    i = 0
+    for file in l:    
+    parts = file.split('/')
+    label = parts[-2]
+    if i%mod_no ==0:
+        if label == 'REAL':
+        cmd = f'mv {file} data/source/train_val_sort/{mode}/REAL/'
+        os.system(cmd)
+        elif label == 'FAKE':
+        cmd = f'mv {file} data/source/train_val_sort/{mode}/FAKE/'
+        os.system(cmd)
+    
+    i += 1
