@@ -59,8 +59,8 @@ if __name__ == "__main__":
 
 
   # Train params
-  EPOCHS=30
-  batch_size=1
+  EPOCHS=10
+  batch_size=3
   epoch_steps = 1000
   val_steps = 1000
   reg_penalty = 0.001
@@ -69,21 +69,33 @@ if __name__ == "__main__":
   # Dataset params
   train_root = '../data/source/train_val_sort/train/*/*.mp4'
   val_root = '../data/source/train_val_sort/val/*/*.mp4'
-  checkpoint_prefix = 'models/ckpt_{epoch}'
+  
   resize_shape = (224,224)
-  sequence_len = 64
+  sequence_len = 30
   prefetch_num = 10
 
   # Final model params
+  dt = datetime.datetime.now()
+  tstamp = f'{dt.year}{dt.month}{dt.day}{dt.hour}:{dt.minute}:{dt.second}'
+
   regstr = str(reg_penalty).split('.')[1]
-  final_model_path = f'models/0307_{epoch_steps}_steps_{regstr}_reg.h5'
+  model_stamp = tstamp + f'_model_{epoch_steps}_steps_{regstr}_reg'
+  final_model_path = f'models/{model_stamp}/model.h5'
+
+  checkpoint_prefix = f'models/{model_stamp}/' + 'ckpt_{epoch}'
 
   # Losses and metrics
-  loss_object = tf.keras.losses.BinaryCrossentropy()
-  metrics = [tf.keras.metrics.BinaryCrossentropy(),
-              tf.keras.metrics.BinaryAccuracy()]
-  batch_stats_callback = CollectBatchStats(acc_met='binary_accuracy',
-                                            loss_met='binary_crossentropy')
+  # loss_object = tf.keras.losses.BinaryCrossentropy()
+  # metrics = [tf.keras.metrics.BinaryCrossentropy(),
+  #             tf.keras.metrics.BinaryAccuracy()]
+  # batch_stats_callback = CollectBatchStats(acc_met='binary_accuracy',
+  #                                           loss_met='binary_crossentropy')
+
+  loss_object = tf.keras.losses.CategoricalCrossentropy()
+  metrics = [tf.keras.metrics.CategoricalCrossentropy(),
+              tf.keras.metrics.CategoricalAccuracy()]
+  batch_stats_callback = CollectBatchStats(acc_met='categorical_accuracy',
+                                           loss_met='categorical_crossentropy')
 
 
 
@@ -154,24 +166,22 @@ if __name__ == "__main__":
                               bias_regularizer=reg,  
                               return_sequences=False,
                               ))
-  model.add(BatchNormalization())
   model.add(Conv2D(128 , (3,3), strides=(2,2), 
                           padding='valid', data_format='channels_last',
                           kernel_regularizer=reg,
                           bias_regularizer=reg,
                           activation='relu'))
-  model.add(BatchNormalization())
   model.add(Conv2D(64 , (3,3), strides=(2,2), 
                           padding='valid', data_format='channels_last',
                           kernel_regularizer=reg,
                           bias_regularizer=reg,
                           activation='relu'))
   model.add(Flatten())
-  model.add(Dense(64, 
+  model.add(Dense(128, 
                   kernel_regularizer=reg,
                   bias_regularizer=reg,
                   activation='relu'))
-  model.add(Dense(1, 
+  model.add(Dense(2, 
                   kernel_regularizer=reg,
                   bias_regularizer=reg,
                   activation='sigmoid'))
@@ -217,22 +227,20 @@ if __name__ == "__main__":
     model.save(final_model_path)
     # Save some figures
     outdir = '../data/output/figures/'
-    dt = datetime.datetime.now()
-    tstamp = f"{dt.year}{dt.month}{dt.day}_{dt.hour}:{dt.minute}:{dt.second}"
     
     plt.figure()
     plt.ylabel("Acc")
     plt.xlabel("Training Steps")
     plt.ylim([0,2])
     plt.plot(batch_stats_callback.batch_acc)
-    plt.savefig(outdir + tstamp+"_accuracy.png")
+    plt.savefig(outdir + model_stamp + "_accuracy.png")
 
     plt.figure()
     plt.ylabel("Loss")
     plt.xlabel("Training Steps")
-    plt.ylim([0,2])
+    plt.ylim([0,3])
     plt.plot(batch_stats_callback.batch_losses)
-    plt.savefig(outdir + tstamp+"_losses.png")
+    plt.savefig(outdir + model_stamp + "_losses.png")
 
     plt.figure()
     plt.plot(history.history['binary_accuracy'], label='accuracy')
@@ -241,7 +249,7 @@ if __name__ == "__main__":
     plt.ylabel('Accuracy')
     plt.ylim([0.1, 1])
     plt.legend(loc='best')
-    plt.savefig(outdir + tstamp+"_train_val_acc.png")
+    plt.savefig(outdir + model_stamp + "_train_val_acc.png")
     
 
     plt.figure()
@@ -251,5 +259,5 @@ if __name__ == "__main__":
     plt.ylabel('Loss')
     plt.ylim([0, 2])
     plt.legend(loc='best')
-    plt.savefig(outdir + tstamp+"_train_val_loss.png")
+    plt.savefig(outdir + model_stamp + "_train_val_loss.png")
 

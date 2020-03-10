@@ -263,5 +263,58 @@ def model_0304_v2():
                     kernel_regularizer=reg,
                     bias_regularizer=reg,
                     activation='sigmoid'))
+    return model
 
+def model_feat_extract_0309():
+    test_dims = (None, None, 224, 224, 3)
+    reg = tf.keras.regularizers.l2(l=0.001)
+    model = tf.keras.models.Sequential()
+    model.add(ConvLSTM2D(64, (3,3), strides=(2,2), 
+                              padding='same', 
+                              data_format='channels_last',
+                              recurrent_regularizer=reg,
+                              kernel_regularizer=reg,
+                              bias_regularizer=reg, 
+                              return_sequences=True,
+                              input_shape=test_dims[1:]))
+    model.add(ConvLSTM2D(128, (3,3), strides=(2,2), 
+                              padding='same', 
+                              data_format='channels_last',
+                              recurrent_regularizer=reg,
+                              kernel_regularizer=reg,
+                              bias_regularizer=reg,  
+                              return_sequences=True,
+                              ))
+    model.add(ConvLSTM2D(128, (3,3), strides=(2,2), 
+                              padding='same', 
+                              data_format='channels_last',
+                              recurrent_regularizer=reg,
+                              kernel_regularizer=reg,
+                              bias_regularizer=reg, 
+                              return_sequences=True,
+                              ))
+    model.add(ConvLSTM2D(256, (3,3), strides=(2,2), 
+                              padding='same', 
+                              data_format='channels_last',
+                              recurrent_regularizer=reg,
+                              kernel_regularizer=reg,
+                              bias_regularizer=reg,  
+                              return_sequences=False,
+                              ))
+    model.add(Conv2D(128 , (3,3), strides=(2,2), 
+                          padding='valid', data_format='channels_last',
+                          kernel_regularizer=reg,
+                          bias_regularizer=reg,
+                          activation='relu'))
+    model.add(Conv2D(64 , (3,3), strides=(2,2), 
+                          padding='valid', data_format='channels_last',
+                          kernel_regularizer=reg,
+                          bias_regularizer=reg,
+                          activation='relu'))
+    model.add(Conv2D(64 , (3,3), strides=(2,2), 
+                          padding='valid', data_format='channels_last',
+                          kernel_regularizer=reg,
+                          bias_regularizer=reg,
+                          activation='relu'))
+    
     return model

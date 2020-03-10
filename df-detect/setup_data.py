@@ -6,14 +6,18 @@ import sys
 import glob
 import argparse
 from sklearn.model_selection import train_test_split
+import cv2
 
 
 # TODO Set this up to updaste based on new zip file download
+# 1. Download all zip files from kaggle page
+# 2. Run this script from the command line to extract, remove zip
+# and then move video files to a structured directory basedon their real or fake label
 
 def parse_args():
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("-d", help="Folder for downloaded tar.gz video files")
+    parser.add_argument("-d", help="Folder for downloaded zipped video files")
     # parser.add_argument("-extract-bucket", help="location to find json meta data file and images after extraction")
     parser.add_argument("-lp", help="label path to store json labels")
     parser.add_argument("-im-sort-path", help="path to store sorted images")
@@ -125,6 +129,86 @@ def sort_deepfake_train_examples(train_path, sorted_class_path, meta_path, test_
     move_vids(df_val, val_fakes_path, val_real_path)
 
 
+def re_sort(fraction, mode = 'val'):
+
+    if mode == 'val':
+        l = glob.glob('../data/source/train_val_sort/val/*/*.mp4')
+    elif mode == 'train':
+        l = glob.glob('../data/source/train_val_sort/train/*/*.mp4')
+    mod_no = int(1/fraction)
+    i = 0
+    for file in l:    
+        parts = file.split('/')
+        label = parts[-2]
+        if i%mod_no ==0:
+            if label == 'REAL':
+                cmd = f'mv {file} data/source/train_val_sort/{mode}/REAL/'
+                os.system(cmd)
+            elif label == 'FAKE':
+                cmd = f'mv {file} data/source/train_val_sort/{mode}/FAKE/'
+                os.system(cmd)
+        i += 1
+
+def get_nframes_test(path):
+    capture = cv2.VideoCapture(path)
+    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    capture.release()
+    return frame_count
+    
+def test_frames_clean(df):
+
+    i = 0
+    arr = df.to_numpy()
+    for r,f in arr:
+        fs = get_nframes_test(f)
+        rs = get_nframes_test(r)
+        i+=1
+        if i%10000 == 0:
+            print('vids tested: ', i+1)
+        
+        if fs != rs:
+            print(f'found bad pair: \n{r}\n{f}')
+            ind = df[df.real == r].index
+            df.drop(ind, inplace=True)
+    return df
+
+            
+
+
+def etl_save_pairs(json_path):
+
+    data_head = '../data/source/train_val_sort/*/*/'
+    df = pd.read_json(json_path)
+    df_fakes = df[df['label'] == 'FAKE']
+    fake_names = df_fakes['index']
+    df_fakes['fake_name'] = fake_names
+
+    df_out = pd.DataFrame()
+
+    fakes_paths = []
+    reals_paths = []
+    i = 0
+    for r,f in df_fakes[["original","fake_name"]].to_numpy():
+
+        r_path = glob.glob(data_head + r)
+        f_path = glob.glob(data_head + f)
+
+        if len(r_path) != 0 and len(f_path) != 0:
+            reals_paths.append(r_path[0])
+            fakes_paths.append(f_path[0])
+        i +=1
+        if i%100 == 0:
+            print('files matched: ', len(reals_paths))
+    
+    df_out['fake'] = fakes_paths
+    df_out['real'] = reals_paths
+
+    del df_fakes, df
+    df_out_final = test_frames_clean(df_out_final)
+    out_path = '~/deepfake-proj/data/source/labels/'
+    df_out_final.to_csv(out_path + 'fake_to_real_mapping.csv')
+    print('total files cleaned, matched: ', len(df_out_final))
+
 if __name__== "__main__":
 
     # Get the filepath args
@@ -171,24 +255,3 @@ if __name__== "__main__":
 
     sort_deepfake_train_examples(download_folder, args.im_sort_path, json_loc, test_split=args.train_val_split)
 
-
-def re_sort(fraction, mode = 'val'):
-
-    if mode == 'val':
-        l = glob.glob('../data/source/train_val_sort/val/*/*.mp4')
-    elif mode == 'train':
-        l = glob.glob('../data/source/train_val_sort/train/*/*.mp4')
-    mod_no = int(1/fraction)
-    i = 0
-    for file in l:    
-    parts = file.split('/')
-    label = parts[-2]
-    if i%mod_no ==0:
-        if label == 'REAL':
-        cmd = f'mv {file} data/source/train_val_sort/{mode}/REAL/'
-        os.system(cmd)
-        elif label == 'FAKE':
-        cmd = f'mv {file} data/source/train_val_sort/{mode}/FAKE/'
-        os.system(cmd)
-    
-    i += 1

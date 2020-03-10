@@ -215,8 +215,10 @@ class DeepFakeTransformer(object):
         out:
             video_frames, label:  
         '''
-
-        filepath = filename.numpy().decode('utf-8')
+        if isinstance(filename, str):
+            filepath= filename
+        else:
+            filepath = filename.numpy().decode('utf-8')
 
         all_frames = self.reader.read_frames(filepath, num_frames=self.seq_length)
         
@@ -265,9 +267,9 @@ class DeepFakeTransformer(object):
         # filelog.append(fname)
         
         if label == 'FAKE':
-            out_label = tf.constant([1.0])
+            out_label = tf.constant([0.0, 1.0])
         else:
-            out_label = tf.constant([0.0])
+            out_label = tf.constant([1.0 , 0.0])
         
         vid = self.get_frames(filename)
         assert len(vid.shape) == 4, f'{filename} has incorrect video dimensions'
@@ -284,10 +286,103 @@ class DeepFakeTransformer(object):
                                         inp=[x],
                                         Tout=[tf.float32, tf.float32])
         result_tensors[0].set_shape((None,None,None,None))
-        result_tensors[1].set_shape((1,))
+        result_tensors[1].set_shape((2,))
         return result_tensors
 
+class DeepFakeDualTransformer(object):
+    def __init__(self, chan_means=[0.485, 0.456, 0.406],
+                       chan_std_dev=[0.229, 0.224, 0.225],
+                       resize_shape=(300,300),
+                       seq_length=298,
+                       mode="train"):
+        """[summary]
+        
+        Keyword Arguments:
+            chan_means {list} -- [description] (default: {[0.485, 0.456, 0.406]})
+            chan_std_dev {list} -- [description] (default: {[0.229, 0.224, 0.225]})
+            resize_shape {tuple} -- [description] (default: {(300,300)})
+            seq_length {int} -- [description] (default: {298})
+            mode {str} -- [description] (default: {"train"})
+        """
 
+        self.chan_means = chan_means
+        self.chan_std_dev = chan_std_dev
+        self.resize_shape = resize_shape
+        self.seq_length = seq_length
+        self.mode = mode
+        self.reader = VideoReader()
+        
+    def get_frames(self, fnames):
+
+        num_frames = self.seq_length
+        
+        real = fnames.numpy()[0].decode('utf-8')
+        fake = fnames.numpy()[1].decode('utf-8')
+        
+        real_capture = cv2.VideoCapture(real)
+        fake_capture = cv2.VideoCapture(fake)
+        
+        
+        # Counts should be equal between real and fakes
+        frame_count = int(fake_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        # Base inds on same frame grab to use matching video frames
+        start = np.random.randint(frame_count-num_frames)
+        frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int)
+        
+        real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, frame_idxs)
+        fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, frame_idxs)
+        
+        real_capture.release()
+        fake_capture.release()
+        
+        return real_vid, fake_vid
+    
+    def normalize(self, video, chan_means, chan_std_dev):
+        """[summary]
+
+        Arguments:
+            video {tf.Tensor} -- tensorflow reshaped video data
+            chan_means {array} -- [description]
+            chan_std_dev {array} -- [description]
+
+        Returns:
+            [tf.Tensor] -- normalized video data
+        """
+
+        video /= 255
+        video -= chan_means
+        video /= chan_std_dev
+
+        return video
+    
+    def transform_vid(self, filenames):
+
+        
+        chan_means = self.chan_means
+        chan_std_dev = self.chan_std_dev
+        resize_shape = self.resize_shape
+        
+        # For kaggle only
+        # fname = parts[-1].numpy().decode('utf-8')
+        # global filelog
+        # filelog.append(fname)
+        
+        real_vid, fake_vid = self.get_frames(filenames)
+        
+
+        real_vid = tf.image.resize(real_vid, size=resize_shape)
+        fake_vid = tf.image.resize(fake_vid, size=resize_shape)
+        real_vid = self.normalize(real_vid, chan_means, chan_std_dev)
+        fake_vid = self.normalize(fake_vid, chan_means, chan_std_dev)
+
+        return tf.stack((real_vid, fake_vid))
+    
+    def transform_map(self, x):
+        result_tensor = tf.py_function(func=self.transform_vid,
+                                        inp=[x],
+                                        Tout=[tf.float32])
+        result_tensor[0].set_shape((2,None,None,None,None))
+        return result_tensor[0]
 
 if __name__ == "__main__":
     
