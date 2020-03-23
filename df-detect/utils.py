@@ -4,6 +4,7 @@ import pandas as pd
 # from tensorflow.image import resize, transpose, random_flip_up_down, random_flip_left_right, random_brightness, random_contrast, random_crop
 import tensorflow as tf
 import math
+import os
 
 def get_frames(filepath):
     '''
@@ -18,31 +19,38 @@ def get_frames(filepath):
     cap = cv2.VideoCapture(filepath) 
     # captures the video. Think of it as if life is a movie so we ask the method to focus on patricular event
     # that is our video in this case. It will concentrate on the video
-    frameCount = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frameWidth = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frameHeight = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    all_frames = np.empty((frameCount, frameHeight, frameWidth, 3), np.dtype('uint8'))
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_idxs = np.linspace(0, frame_count, num=frame_count, dtype=np.int)
     
     
-
-    fc = 0
-    while(cap.isOpened() and fc < frameCount): # as long as all the frames have been traversed
-        ret, frame = cap.read()
-        # capture the frame. Again, if life is a movie, this function acts as camera
-        
-        if ret==True:
-            all_frames[fc] = frame
-            fc += 1
-            if cv2.waitKey(1) & 0xFF == ord('q'): # break in between by pressing the key given
-                break
-        else:
-            break
+    all_frames, _ = _read_frames_at_indices(filepath, cap, frame_idxs)
                 
     cap.release()
     # release whatever was held by the method for say, resources and the video itself
     return all_frames
-    
+
+def _read_frames_at_indices(path, capture, frame_idxs):
+    try:
+        frames = []
+        idxs_read = []
+        for frame_idx in range(frame_idxs[0], frame_idxs[-1] + 1):
+            # Get the next frame, but don't decode if we're not using it.
+            ret = capture.grab()
+
+            # Need to look at this frame?
+            current = len(idxs_read)
+            if frame_idx == frame_idxs[current]:
+                ret, frame = capture.retrieve()
+
+                frames.append(frame)
+                idxs_read.append(frame_idx)
+
+        if len(frames) > 0:
+            return np.stack(frames), idxs_read
+
+    except:
+        print("Exception while reading movie %s" % path)
+        return None    
 
 
 def load_process_train_targets(meta_path, train_path, return_df = True):
@@ -61,7 +69,7 @@ def load_process_train_targets(meta_path, train_path, return_df = True):
 
     df = pd.read_json(meta_path)
     df['target_class'] = (df['label'] == 'FAKE').astype('float')
-    df['filepath'] = train_path + df['index']
+    df['filepath'] = df['index'].apply(lambda x: os.path.join(train_path, x))
     df.drop(['index', 'original', 'label'], axis=1, inplace=True)
     df.to_csv(meta_path + 'paths_labels.csv', header=True)
 

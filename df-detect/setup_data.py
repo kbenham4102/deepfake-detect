@@ -21,7 +21,8 @@ def parse_args():
     # parser.add_argument("-extract-bucket", help="location to find json meta data file and images after extraction")
     parser.add_argument("-lp", help="label path to store json labels")
     parser.add_argument("-im-sort-path", help="path to store sorted images")
-    parser.add_argument("--train-val-split",type=float, help="percent to hold out as validation set", default=0.2)
+    parser.add_argument("--train-val-split",type=float, help="percent to hold out as validation set", default=0.015)
+    parser.add_argument("--json-to-update", type=str, help="if set, loads an existing json to append more data to")
 
     args = parser.parse_args()
 
@@ -130,6 +131,15 @@ def sort_deepfake_train_examples(train_path, sorted_class_path, meta_path, test_
 
 
 def re_sort(fraction, mode = 'val'):
+    """
+    adhoc function to resort train val split, not really needed with new dataloader
+    
+    Arguments:
+        fraction {[type]} -- [description]
+    
+    Keyword Arguments:
+        mode {str} -- [description] (default: {'val'})
+    """
 
     if mode == 'val':
         l = glob.glob('../data/source/train_val_sort/val/*/*.mp4')
@@ -175,9 +185,11 @@ def test_frames_clean(df):
             
 
 
-def etl_save_pairs(json_path):
+def etl_save_pairs(json_path, out_path, 
+                   data_head = '/home/kevin/data/deepfakes_data/source/train_val_sort/*/*/', check_dims = False):
 
-    data_head = '../data/source/train_val_sort/*/*/'
+
+    #   
     df = pd.read_json(json_path)
     df_fakes = df[df['label'] == 'FAKE']
     fake_names = df_fakes['index']
@@ -204,17 +216,29 @@ def etl_save_pairs(json_path):
     df_out['real'] = reals_paths
 
     del df_fakes, df
-    df_out_final = test_frames_clean(df_out_final)
-    out_path = '~/deepfake-proj/data/source/labels/'
-    df_out_final.to_csv(out_path + 'fake_to_real_mapping.csv')
-    print('total files cleaned, matched: ', len(df_out_final))
+    if check_dims:
+        df_out_final = test_frames_clean(df_out)
+        print('total files cleaned, matched: ', len(df_out_final))
+    else:
+        df_out.to_csv(os.path.join(out_path, 'fake_to_real_mapping.csv'))
+        print('total files cleaned, matched: ', len(df_out))
 
-if __name__== "__main__":
+def extract_and_move_data():
+    """
+    Steps:
+    1. Make sure all zip files are in the `-d` arg directory. 
+    2. Specify where to store the resulting json dictionary for labels and video pairs
+    3. specify a head directory to store the data
+    example usage:
 
+    python3 setup_data.py -d ~/Downloads/deepfakes -lp ~/data/deepfakes_data/source/labels/ --im-sort-path ~/data/deepfakes_data/source/train_val_sort/
+    """
     # Get the filepath args
     args = parse_args()
 
     download_folder = args.d
+
+
 
     zips = glob.glob(os.path.join(download_folder, '*.zip'))
     print(zips)
@@ -241,7 +265,11 @@ if __name__== "__main__":
     for jf in json_file_list:
         print("appending ", jf)
         if i == 0:
-            df_master = pd.read_json(jf, orient='index').reset_index()
+            if args.json_to_update:
+                # TODO make this work with new jsons loaded
+                df_master = pd.read_json(args.json_to_update) # Should be formatted correctly
+            else:
+                df_master = pd.read_json(jf, orient='index').reset_index()
         else:
             df_temp = pd.read_json(jf, orient='index').reset_index()
             df_master = df_master.append(df_temp)
@@ -254,4 +282,18 @@ if __name__== "__main__":
     print("saved new json file ", json_loc)
 
     sort_deepfake_train_examples(download_folder, args.im_sort_path, json_loc, test_split=args.train_val_split)
+    return json_loc, args.im_sort_path
+
+if __name__== "__main__":
+
+    json_loc, data_head = extract_and_move_data()
+    out_list = json_loc.split('/')[:-1]
+    out_path = os.path.join(*out_list)
+
+    # Run a function to create a master list for matched originals and fakes
+    etl_save_pairs(json_loc, out_path, data_head=os.path.expanduser(data_head))
+
+
+
+
 

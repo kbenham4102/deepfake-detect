@@ -1,6 +1,9 @@
 import numpy as np
 import tensorflow as tf
 import cv2
+import pandas as pd
+import gc
+import os
 
 
 class VideoReader:
@@ -170,7 +173,7 @@ class VideoReader:
             return np.expand_dims(frame, axis=0), [frame_idx]
     
     def _postprocess_frame(self, frame):
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # if self.insets[0] > 0:
         #     W = frame.shape[1]
@@ -381,32 +384,252 @@ class DeepFakeDualTransformer(object):
         result_tensor = tf.py_function(func=self.transform_vid,
                                         inp=[x],
                                         Tout=[tf.float32])
+        # Convention is that result_tensor[0] = real_vid, result_tensor[1] = fake_vid
         result_tensor[0].set_shape((2,None,None,None,None))
-        return result_tensor[0]
+        labels = tf.constant([[1.0, 0.0], [0.0, 1.0]])
+        return result_tensor[0], labels
+class EfficientNetLite(object):
+    
+    def __init__(self, path,  output_layer_ind=158):
+        self.interpreter = tf.lite.Interpreter(model_path=path)
+        self.interpreter.allocate_tensors()
+        self.out_ind = output_layer_ind
+    
+    def extract_from_image(self, img):
+        # Note strange behavior with RuntimeError has been observed
+        
+        self.interpreter.set_tensor(0, img)
+        self.interpreter.invoke()
+        output_data = self.interpreter.get_tensor(self.out_ind)
+        
+        return output_data
+    
+    def get_output_shapes(self):
+        
+        out_shapes = self.interpreter.get_tensor(self.out_ind).shape
+        
+        return out_shapes
+        
+
+    
+
+class DeepFakeLoadExtractFeatures(object):
+    def __init__(self, chan_means=[0.485*255, 0.456*255, 0.406*255],
+                       chan_std_dev=[0.229*255, 0.224*255, 0.225*255],
+                       resize_shape=(300,300),
+                       seq_length=298,
+                       feat_extractor_path='',
+                       feat_extractor_output_layer=158,
+                       mode="train"):
+        """[summary]
+        
+        Keyword Arguments:
+            chan_means {list} -- [description] (default: {[0.485*255, 0.456*255, 0.406*255]})
+            chan_std_dev {list} -- [description] (default: {[0.229*255, 0.224*255, 0.225*255]})
+            resize_shape {tuple} -- [description] (default: {(300,300)})
+            seq_length {int} -- [description] (default: {298})
+            feat_extractor_path {str} -- [description] (default: {''})
+            feat_extractor_output_layer {int} -- [description] (default: {158})
+            mode {str} -- [description] (default: {"train"})
+        """
+
+        self.chan_means = chan_means
+        self.chan_std_dev = chan_std_dev
+        self.resize_shape = resize_shape
+        self.seq_length = seq_length
+        self.mode = mode
+        self.reader = VideoReader()
+        self.efficientnet_extractor = EfficientNetLite(path=feat_extractor_path, 
+                                      output_layer_ind=feat_extractor_output_layer)
+        
+        self.frame_feature_shapes = self.efficientnet_extractor.get_output_shapes()[1:]
+        
+    def get_frames(self, fnames):
+
+        num_frames = self.seq_length
+        
+        real = fnames.numpy()[0].decode('utf-8')
+        fake = fnames.numpy()[1].decode('utf-8')
+        
+        real_capture = cv2.VideoCapture(real)
+        fake_capture = cv2.VideoCapture(fake)
+        
+        
+        # Counts should be equal between real and fakes
+        real_frame_count = int(real_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        fake_frame_count = int(fake_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        if num_frames != 300:
+            # Base inds on same frame grab to use matching video frames
+            start = np.random.randint(real_frame_count-num_frames)
+
+            frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int, endpoint=False)
+            
+            real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, frame_idxs)
+            fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, frame_idxs)
+
+        else:
+            real_frame_idxs = np.linspace(0, real_frame_count, 
+                                     num=real_frame_count, 
+                                     dtype=np.int,
+                                     endpoint=False)
+            fake_frame_idxs = np.linspace(0, fake_frame_count, 
+                                     num=fake_frame_count, 
+                                     dtype=np.int,
+                                     endpoint=False)
+
+            real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, real_frame_idxs)
+            fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, fake_frame_idxs)
+        
+        real_capture.release()
+        fake_capture.release()
+        
+        return real_vid, fake_vid
+    
+    def normalize(self, video, chan_means, chan_std_dev):
+        """[summary]
+
+        Arguments:
+            video {tf.Tensor} -- tensorflow reshaped video data
+            chan_means {array} -- [description]
+            chan_std_dev {array} -- [description]
+
+        Returns:
+            [tf.Tensor] -- normalized video data
+        """
+        
+        video -= chan_means
+        video /= chan_std_dev
+
+        return video
+    
+    def transform_vid(self, filenames):
+
+        
+        chan_means = self.chan_means
+        chan_std_dev = self.chan_std_dev
+        resize_shape = self.resize_shape
+        
+        # For kaggle only
+        # fname = parts[-1].numpy().decode('utf-8')
+        # global filelog
+        # filelog.append(fname)
+        
+        real_vid, fake_vid = self.get_frames(filenames)
+        
+
+        real_vid = tf.image.resize(real_vid, size=resize_shape)
+        fake_vid = tf.image.resize(fake_vid, size=resize_shape)
+        real_vid = self.normalize(real_vid, chan_means, chan_std_dev)
+        fake_vid = self.normalize(fake_vid, chan_means, chan_std_dev)
+
+        return real_vid, fake_vid
+    
+    def extract_features(self, filenames):
+        
+        rvid, fvid = self.transform_vid(filenames)
+        
+        real_output_seq = np.empty((self.seq_length, *self.frame_feature_shapes), dtype=np.float32)
+        fake_output_seq = np.empty((self.seq_length, *self.frame_feature_shapes), dtype=np.float32)
+        
+        for i in range(self.seq_length):
+            
+            real_output_seq[i] = self.efficientnet_extractor.\
+                                      extract_from_image(tf.reshape(rvid[i], 
+                                                        (1, *self.resize_shape, 3)))
+            fake_output_seq[i] = self.efficientnet_extractor.\
+                                      extract_from_image(tf.reshape(fvid[i], 
+                                                        (1, *self.resize_shape, 3)))
+        del rvid, fvid
+        gc.collect()
+        return tf.stack((real_output_seq, fake_output_seq))
+    
+    def transform_map(self, x):
+        result_tensor = tf.py_function(func=self.extract_features,
+                                        inp=[x],
+                                        Tout=[tf.float32])
+        # Convention is that result_tensor[0] = real_vid, result_tensor[1] = fake_vid
+        result_tensor[0].set_shape((2,None,None,None,None))
+        labels = tf.constant([[0.0], [1.0]])
+        return result_tensor[0], labels
+
+
+class ExtractedFeatureLoader():
+    def __init__(self):
+        self.initial_var = 0
+
+    def read_numpy(self, filepath):
+
+        file_str = filepath.numpy().decode('utf-8')
+        real_fake_feats = np.load(file_str, allow_pickle=True)
+
+        return real_fake_feats
+    
+    def tflow_map(self, x):
+
+        result_tensor = tf.py_function(func=self.read_numpy,
+                                        inp=[x],
+                                        Tout=[tf.float32])
+        # Convention is that result_tensor[0] = real_vid, result_tensor[1] = fake_vid
+        result_tensor[0].set_shape((2,None,None,None,None))
+        labels = tf.constant([[0.0], [1.0]])
+        return result_tensor[0], labels
+
+
+
+
+def etl_video_pairs_numpy(data_pairs_path,
+                          out_dir,
+                          resize_shape, 
+                          sequence_len, 
+                          feature_extractor_path
+                          ):
+
+
+    df_pairs = pd.read_csv(data_pairs_path)[['real', 'fake']]
+
+
+    extractor = DeepFakeLoadExtractFeatures(resize_shape=resize_shape, seq_length=sequence_len,
+                                            feat_extractor_path=feature_extractor_path)
+    
+    out_paths = []
+    i = 0
+    for r, f in df_pairs.to_numpy():
+
+        real_file = r.split('/')[-1].split('.')[0]
+        fake_file = f.split('/')[-1].split('.')[0]
+
+        npy_file = real_file + '_' + fake_file + '.npy'
+
+        extract = extractor.extract_features(tf.constant([r,f]))
+
+        out_path = os.path.join(out_dir, npy_file)
+
+        np.save(out_path, extract)
+
+        out_paths.append(out_path)
+
+        
+        if i%100 == 0:
+            print(f"Saved {i+1} npy files latest path: {out_path}")
+        
+        i+=1
+
+    
+    # df = pd.DataFrame()
+    # df['files'] = np.array(out_paths)
+    # df.to_csv(os.path.join(out_dir, 'real_fake_npys.csv'))
+
 
 if __name__ == "__main__":
+
+
+    etl_video_pairs_numpy('../data/intermediate/fake_to_real_mapping_part.csv',
+                          '../data/intermediate/whole_videos_7x7x320',
+                          (224,224), 
+                          32, 
+                          'models/efficientnet-lite0/efficientnet-lite0-fp32.tflite'
+                          )
     
-    import pathlib
-    import glob 
 
-
-    vid_root = '../data/source/train_val_sort/*/*/*.mp4'
-    vid_ds = tf.data.Dataset.list_files(vid_root, shuffle=False)
-    transformer = DeepFakeTransformer(resize_shape=(224,224), seq_length=30)
-    
-    # vid_ds = vid_ds.map(lambda x: transformer.transform_map(x))
-    # vid_ds = vid_ds.batch(2).prefetch(4)
-
-    # print("TESTING VIDEO LOADER FUNCTIONALITY")
-
-    # for item in vid_ds.as_numpy_iterator():
-    #     tf.convert_to_tensor(item)
-
-    # vidreader = VideoReader()
-
-    vid_files = glob.glob(vid_root)
-
-    for f in vid_files:
-
-        vid, label = transformer.transform_map(tf.convert_to_tensor(f.encode('utf-8')))
 

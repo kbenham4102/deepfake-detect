@@ -2,169 +2,236 @@ import tensorflow as tf
 import numpy as np
 import gc
 import pandas as pd 
+from tensorflow.keras.layers import ConvLSTM2D, Conv3D, Conv2D, Flatten, Dense, BatchNormalization, MaxPool2D
+import tensorflow.math as M
 from utils import *
 from sklearn.model_selection import train_test_split
+from video_loader import DeepFakeDualTransformer, DeepFakeTransformer
 import sys
-from model import DeepFakeDetector
-from tensorflow.keras.layers import ConvLSTM2D, Conv3D, Conv2D, Flatten, Dense
+import pathlib
+import datetime
+import matplotlib.pyplot as plt
 
+@tf.function
+def loss(labels, logits):
+
+    cross_entropies = tf.keras.losses.categorical_crossentropy(labels, logits)
+    batch_loss = tf.nn.compute_average_loss(cross_entropies, global_batch_size=cross_entropies.shape[0])
+
+    return batch_loss
+
+
+@tf.function
+def grad(model, x, labels, loss):
+    with tf.GradientTape() as tape:
+        logits = model(x, training=True)
+        loss_value = loss(labels, logits)
+    grads = tape.gradient(loss_value, model.trainable_variables)
+    return loss_value, grads
+
+@tf.function
+def apply_grads(optimizer, grads, model):
+  optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+
+def validation_step(model, x, labels, loss):
+  logits = model(x)
+  loss_value = loss(labels, logits)
+  return loss_value
 
 if __name__ == "__main__":
-
     # Define some params
-    EPOCHS=1
-    validate_epochs = [0,1,2,10]
-    batch_size=3
-    test_fraction = 0.2
-    train_root = '../data/source/train/'
-    meta_path = '../data/source/labels/train_meta.json'
-    checkpoint_prefix = 'models/ckpt_{epoch}'
+    # model params
+    
+    # Train params
+    EPOCHS=10
+    batch_size=1
+    reg_penalty = 0.001
+    validate_epochs = list(np.arange(EPOCHS))
+    dropout_frac = 0.2
+    
+
+    # Dataset params
+    data_pairs_path = '../data/source/labels/fake_to_real_mapping.csv'
     resize_shape = (224,224)
     sequence_len = 32
-    n_workers = 1
-    use_mult_prc = False
-    debug = True
-
-    test_dims = (batch_size, sequence_len, *resize_shape, 3)
-
-    df = load_process_train_targets(meta_path, train_root)
-    train_df, val_df = train_test_split(df, test_size=test_fraction)
-
-    train_size = len(train_df)
-    val_size = len(val_df)
-    train_batches = int(np.ceil(train_size/batch_size))
-    val_batches = int(np.ceil(val_size/batch_size))
-    
-    if debug:
-        train_batches=3
-        val_batches=3
-        # i = 1
-        # batch_df = train_df[i*batch_size:(i+1)*batch_size]
-        # batch_fnames = batch_df.filepath.to_list()
-        # print(batch_fnames)
-        # y = np.array(batch_df.target_class.to_list())
-        # x = load_transform_batch(batch_fnames, 
-        #                         resize_shape=resize_shape, 
-        #                         seq_length=sequence_len)
-        # print(x)
+    prefetch_num = 4
+    train_val_split = 0.015
 
 
+    # Final model params
+    dt = datetime.datetime.now()
+    tstamp = f'{dt.year}{dt.month}{dt.day}{dt.hour}{dt.minute}{dt.second}'
+    regstr = str(reg_penalty).split('.')[1]
 
-    loss_object = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    model_stamp = tstamp + f'_classifier_model_{regstr}_reg'
+    final_model_path = f'models/{model_stamp}/model.h5'
 
-    optimizer = tf.keras.optimizers.SGD(learning_rate=0.001)
+    # Use `model_stamp` variable if new model is desired, otherwise enter manually
+    checkpoint_prefix = f'models/{model_stamp}/'
 
-    def loss(model, x, y):
-        y_ = model(x)
-        return loss_object(y_true=y, y_pred=y_)
-    
-    def grad(model, inputs, targets):
-        with tf.GradientTape() as tape:
-            loss_value = loss(model, inputs, targets)
-        return loss_value, tape.gradient(loss_value, model.trainable_variables)
+    # Define dummy test dims based on parameters
+    test_dims = (None, None, *resize_shape, 3)
+
+    # Get device names
+
+    cpu = tf.config.experimental.list_physical_devices('CPU')[0].name
+    print("FOUND CPU AT: ", cpu)
+    print([x[0] for x in tf.config.experimental.list_physical_devices('GPU')])
+
+
+    # Define and load the datasets
+    df_pairs = pd.read_csv(data_pairs_path)[['real', 'fake']]
+    train_df, val_df = train_test_split(df_pairs, test_size = train_val_split)
 
     
+    # Create dataset from pairs of path strings
+    train_ds = tf.data.Dataset.from_tensor_slices(train_df.to_numpy())
+    val_ds = tf.data.Dataset.from_tensor_slices(val_df.to_numpy())
+
+    # TODO add in random crops, rotations, etc to make this non-redundant
+    # define the transformer to load data on the fly
+    train_transformer = DeepFakeDualTransformer(resize_shape=resize_shape, seq_length=sequence_len)
+    val_transformer = DeepFakeDualTransformer(resize_shape=resize_shape, seq_length=sequence_len)
+
+    # map the transformer on the dataset entries
+    train_ds = train_ds.map(lambda x: train_transformer.transform_map(x)).batch(batch_size).prefetch(prefetch_num)
+    val_ds = val_ds.map(lambda x: val_transformer.transform_map(x)).batch(batch_size).prefetch(prefetch_num)
+
+
+    X_train_len = len(train_df)
+    X_val_len = len(val_df)
+    num_train_batches = int(np.ceil(X_train_len/batch_size))
+    num_val_batches = int(np.ceil(X_val_len/batch_size))
+
+    lr_fn = tf.keras.optimizers.schedules.PolynomialDecay(0.01, num_train_batches*EPOCHS, 
+                                                          end_learning_rate=1e-5)
+    optimizer = tf.keras.optimizers.SGD(lr_fn)
+
+    # Define the model, currently copying model archs to model.py manually
     model = tf.keras.models.Sequential()
-    model.add(ConvLSTM2D(32, (3,3), strides=(2,2), 
-                                    padding='valid', 
-                                    data_format='channels_last', 
-                                    return_sequences=True,
-                                    input_shape=test_dims[1:]))
-    model.add(ConvLSTM2D(32, (3,3), strides=(2,2), 
-                                    padding='valid', 
-                                    data_format='channels_last', 
-                                    return_sequences=True,
-                                    ))
-    model.add(ConvLSTM2D(32, (3,3), strides=(2,2), 
-                                    padding='valid', 
-                                    data_format='channels_last', 
-                                    return_sequences=True,
-                                    ))
-    model.add(ConvLSTM2D(32, (3,3), strides=(2,2), 
-                                    padding='valid', 
-                                    data_format='channels_last', 
-                                    return_sequences=False,
-                                    ))
-    model.add(Conv2D(16 , (3,3), strides=(2,2), 
-                                  padding='valid', data_format='channels_last', 
-                                  activation='relu'))
-    model.add(Conv2D(16 , (3,3), strides=(2,2), 
-                                  padding='valid', data_format='channels_last', 
-                                  activation='relu'))
+    model.add(ConvLSTM2D(64, (3,3), strides=(2,2), 
+                                padding='same', 
+                                data_format='channels_last',
+                                return_sequences=True,
+                                dropout=dropout_frac,
+                                input_shape=test_dims[1:]))
+    model.add(ConvLSTM2D(128, (3,3), strides=(2,2), 
+                                padding='same', 
+                                data_format='channels_last',
+                                dropout=dropout_frac,
+                                return_sequences=True,
+                                ))
+    model.add(ConvLSTM2D(128, (3,3), strides=(2,2), 
+                                padding='same', 
+                                data_format='channels_last',
+                                dropout=dropout_frac,
+                                return_sequences=True,
+                                ))
+    model.add(ConvLSTM2D(256, (3,3), strides=(2,2), 
+                                padding='same', 
+                                data_format='channels_last',
+                                dropout=dropout_frac, 
+                                return_sequences=False,
+                                ))
+    model.add(MaxPool2D())
+    model.add(BatchNormalization())
+    model.add(Conv2D(128 , (3,3), strides=(1,1), 
+                            padding='same', data_format='channels_last',
+                            activation='relu'))
+    model.add(MaxPool2D())                       
+    model.add(BatchNormalization())
+    model.add(Conv2D(64 , (3,3), strides=(1,1), 
+                            padding='same', data_format='channels_last',
+                            activation='relu'))
+    model.add(MaxPool2D())
+    model.add(BatchNormalization())
     model.add(Flatten())
-    model.add(Dense(1, activation='sigmoid'))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dense(2, activation='softmax'))
+
     print(model.summary())
-
-    # sys.exit(0)
-
+   
+    #sys.exit(0)
+    ckpt = tf.train.Checkpoint(step=tf.Variable(1), optimizer=optimizer, net=model)
+    manager = tf.train.CheckpointManager(ckpt, checkpoint_prefix, max_to_keep=10)
 
     # Keep results for plotting
     train_loss_results = []
-    train_accuracy_results = []
     validation_loss_results = []
-    validation_accuracy_results = []
 
+    if manager.latest_checkpoint:
+      status = ckpt.restore(manager.latest_checkpoint)
+      print("Restored from {} with status {}".format(manager.latest_checkpoint, status))
+    else:
+      print("Initializing from scratch.")
+       
     for epoch in range(EPOCHS):
         epoch_loss_avg = tf.keras.metrics.Mean()
-        epoch_accuracy = tf.keras.metrics.BinaryAccuracy()
+        prgbar = tf.keras.utils.Progbar(num_train_batches, stateful_metrics='loss')
+        
 
+        i = 0
         # Training loop
-        for i in range(train_batches):
+        for train_pair, labels in train_ds:
 
-            with tf.device('CPU:0'):
-                
-                # Get the batch
-                batch_df = train_df[i*batch_size:(i+1)*batch_size]
-                batch_fnames = batch_df.filepath.to_list()
-                y = np.array(batch_df.target_class.to_list()).reshape((batch_size,1))
-                x = load_transform_batch(batch_fnames, 
-                                        resize_shape=resize_shape, 
-                                        seq_length=sequence_len)
+            # Take care of batching shapes
+            train_pair = tf.reshape(train_pair, shape=(batch_size*2, *train_pair.shape[2:]))
+            labels = tf.reshape(labels, shape=(batch_size*2, *labels.shape[2:]))
 
-            with tf.device('GPU:0'):
-                # Optimize the model
-                loss_value, grads = grad(model, x, y)
-                optimizer.apply_gradients(zip(grads, model.trainable_variables))
-            print("Training batch {} loss: {:.3f}".format(i, loss_value))
+            # Optimize the model
+            loss_value, grads = grad(model, train_pair, labels, loss)
+            apply_grads(optimizer, grads, model)
+            
+            if i%1000 == 0:
+              print(" accum mean loss: {:.6f}".format(epoch_loss_avg.result()))
+
+            if (i%5000 == 0) or (i == (X_train_len - 1)):
+                if i != 0:
+                    manager.save(checkpoint_number=(epoch*X_train_len) + i)
+            
+            prgbar.update(i+1, values=[('loss', loss_value.numpy())])
+            # print(" loss_long: {:.8f}".format(loss_value.numpy()))
             # Track progress
             epoch_loss_avg(loss_value)  # Add current batch loss
-            # Compare predicted label to actual label
-            # training=True is needed only if there are layers with different
-            # behavior during training versus inference (e.g. Dropout).
-            epoch_accuracy(y, model(x))
+            i += 1
 
-        # End epoch
+        # End epoch ops
         train_loss_results.append(epoch_loss_avg.result())
-        train_accuracy_results.append(epoch_accuracy.result())
+        print("\nEpoch {:03d}: Loss: {:.10f}".format(epoch+1, epoch_loss_avg.result()))
 
-        if epoch % 1 == 0:
-            print("Epoch {:03d}: Loss: {:.3f}, Accuracy: {:.3%}".format(epoch,
-                                                                        epoch_loss_avg.result(),
-                                                                        epoch_accuracy.result()))
         if epoch in validate_epochs:
-            valid_epoch_loss_avg = tf.keras.metrics.Mean()
-            valid_epoch_accuracy = tf.keras.metrics.BinaryAccuracy()
+          val_prgbar = tf.keras.utils.Progbar(num_val_batches)
+          valid_epoch_loss_avg = tf.keras.metrics.Mean()
 
-            print("Validating {} batches".format(val_batches))
+          print("Validating {} batches".format(num_val_batches))
+          i=0
+          for val_pair, labels in val_ds:
 
-            for i in range(val_batches):
-                
-                # Get the batch
-                batch_df = val_df[i*batch_size:(i+1)*batch_size]
-                batch_fnames = batch_df.filepath.to_list()
-                y = np.array(batch_df.target_class.to_list()).reshape((batch_size,1))
-                x = load_transform_batch(batch_fnames, 
-                                        resize_shape=resize_shape, 
-                                        seq_length=sequence_len)
-                loss_value, grads = grad(model, x, y)
+            # Take care of batching shapes
+            val_pair = tf.reshape(val_pair, shape=(batch_size*2, *val_pair.shape[2:]))
+            labels = tf.reshape(labels, shape=(batch_size*2, *labels.shape[2:]))
 
-                valid_epoch_loss_avg(loss_value)
-                valid_epoch_accuracy(y, model(x))
-            
-            validation_loss_results.append(valid_epoch_loss_avg)
-            validation_accuracy_results.append(valid_epoch_accuracy)
+            loss_value = validation_step(model, val_pair, labels, loss)
+            valid_epoch_loss_avg(loss_value)
+            val_prgbar.update(i+1, values=[('loss', loss_value.numpy())])
+            i+=1
+          
+          validation_loss_results.append(valid_epoch_loss_avg.result())
+          print("Validation {:03d}: Loss: {:.3f}".format(epoch+1, valid_epoch_loss_avg.result()))
 
-            print("Validation {:03d}: Loss: {:.3f}, Accuracy: {:.3%}".format(epoch,
-                                                                        valid_epoch_loss_avg.result(),
-                                                                        valid_epoch_accuracy.result()))
+    model.save(final_model_path)
+
+
+    # Save some figures
+    outdir = '../data/output/figures/'
+
+
+    plt.figure()
+    plt.plot(np.arange(EPOCHS), train_loss_results, label='loss')
+    plt.plot(np.arange(EPOCHS), validation_loss_results, label = 'val_loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend(loc='best')
+    plt.savefig(outdir + model_stamp + "_train_val_loss.png")
 
