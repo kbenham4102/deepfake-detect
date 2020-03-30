@@ -7,7 +7,11 @@ tests/__pycache__/
 __pycache__/
 *.pyc
 *.vscode
-df-detect/models
+df-detect/models/20*
+df-detect/models/03*
+df-detect/models/model*
+df-detect/models/c*
+df-detect/models/eff*
 data/output/
 
 mtcnn/

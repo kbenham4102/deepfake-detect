@@ -318,3 +318,62 @@ def model_feat_extract_0309():
                           activation='relu'))
     
     return model
+
+
+class FeatureDifferentiatorModel(tf.keras.Model):
+    def __init__(self):
+        super(FeatureDifferentiatorModel, self).__init__()
+        self.x1_8 = ConvLSTM2D(64, (3,3), strides=(1,1), 
+                            padding='same', 
+                            data_format='channels_last',
+                            return_sequences=True,
+                            dropout=0.2)
+        self.x2_8 = ConvLSTM2D(128, (3,3), strides=(1,1), 
+                                padding='same', 
+                                data_format='channels_last',
+                                return_sequences=False,
+                                dropout=0.2)
+
+        self.x1_16 = ConvLSTM2D(64, (3,3), strides=(1,1), 
+                                    padding='same', 
+                                    data_format='channels_last',
+                                    return_sequences=True,
+                                    dropout=0.2)
+        self.x2_16 = ConvLSTM2D(128, (3,3), strides=(2,2), 
+                            padding='same', 
+                            data_format='channels_last',
+                            return_sequences=False,
+                            dropout=0.2)
+        self.x_bn1 = tf.keras.layers.BatchNormalization()
+
+        self.x_3 = tf.keras.layers.DepthwiseConv2D((3,3), 
+                                              strides=(2,2), 
+                                              depth_multiplier=2, 
+                                              padding='same')
+        self.x_bn2 = tf.keras.layers.BatchNormalization()
+        self.x_4 = tf.keras.layers.DepthwiseConv2D((3,3), 
+                                              strides=(2,2), 
+                                              depth_multiplier=2, 
+                                              padding='same')
+        self.x_5 = tf.keras.layers.Conv2D(512, (1,1), strides=(2,2))
+        self.x_bn3 = tf.keras.layers.BatchNormalization()
+        self.x_7 = Dense(1, activation='sigmoid')
+
+    def call(self, inputs):
+
+        inputs16 = inputs[0]
+        inputs8 = inputs[1]
+        x8 = self.x1_8(inputs8)
+        x8 = self.x2_8(x8)
+        x16 = self.x1_16(inputs16)
+        x16 = self.x2_16(x16)
+        x_comb = tf.keras.layers.Add()([x16, x8])
+        x = self.x_bn1(x_comb)
+        x = self.x_3(x)
+        x = self.x_bn2(x)
+        x = self.x_4(x)
+        x = self.x_5(x)
+        x = self.x_bn3(x)
+        x = tf.keras.layers.Flatten()(x)
+        out = self.x_7(x)
+        return out

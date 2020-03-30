@@ -388,6 +388,8 @@ class DeepFakeDualTransformer(object):
         result_tensor[0].set_shape((2,None,None,None,None))
         labels = tf.constant([[1.0, 0.0], [0.0, 1.0]])
         return result_tensor[0], labels
+
+
 class EfficientNetLite(object):
     
     def __init__(self, path,  output_layer_ind=158):
@@ -413,25 +415,67 @@ class EfficientNetLite(object):
 
     
 
+class BlazefaceNetLite(object):
+    
+    def __init__(self, path,  output_layer_inds=[114, 157]):
+        """Builds an efficient tflite model from pretrained blazeface
+        to extract features
+        
+        Arguments:
+            path {[type]} -- [description]
+        
+        Keyword Arguments:
+            output_layer_inds {list} -- These are the indices 
+            of the feature map outputs in the model, 
+            defaults are recommended (default: {[114, 157]})
+        """
+        self.interpreter = tf.lite.Interpreter(model_path=path)
+        self.interpreter.allocate_tensors()
+        self.out_ind = output_layer_inds
+    
+    def extract_from_image(self, img):
+        # Note strange behavior with RuntimeError has been observed
+        
+        self.interpreter.set_tensor(0, img)
+        self.interpreter.invoke()
+        out16 = self.interpreter.get_tensor(self.out_ind[0])
+        out8 = self.interpreter.get_tensor(self.out_ind[1])
+        
+        return out16, out8
+    
+    def get_output_shapes(self):
+        
+        out_shape1 = self.interpreter.get_tensor(self.out_ind[0]).shape[1:]
+        out_shape2 = self.interpreter.get_tensor(self.out_ind[1]).shape[1:]
+        
+        return out_shape1, out_shape2
+    
+
 class DeepFakeLoadExtractFeatures(object):
     def __init__(self, chan_means=[0.485*255, 0.456*255, 0.406*255],
                        chan_std_dev=[0.229*255, 0.224*255, 0.225*255],
-                       resize_shape=(300,300),
-                       seq_length=298,
+                       resize_shape=(128,128),
+                       seq_length=64,
                        feat_extractor_path='',
-                       feat_extractor_output_layer=158,
+                       feat_extractor_output_layers=[114, 157],
                        mode="train"):
-        """[summary]
-        
-        Keyword Arguments:
-            chan_means {list} -- [description] (default: {[0.485*255, 0.456*255, 0.406*255]})
-            chan_std_dev {list} -- [description] (default: {[0.229*255, 0.224*255, 0.225*255]})
-            resize_shape {tuple} -- [description] (default: {(300,300)})
-            seq_length {int} -- [description] (default: {298})
-            feat_extractor_path {str} -- [description] (default: {''})
-            feat_extractor_output_layer {int} -- [description] (default: {158})
-            mode {str} -- [description] (default: {"train"})
-        """
+    """[summary]
+    
+    Keyword Arguments:
+        chan_means {list} -- unused for blazeface (default: {[0.485*255, 0.456*255, 0.406*255]})
+        chan_std_dev {list} -- unused for blazeface (default: {[0.229*255, 0.224*255, 0.225*255]})
+        resize_shape {tuple} -- shape to resize all frames by, blazeface uses (default: {(128,128)})
+        seq_length {int} -- number of frames to use (default: {64})
+        feat_extractor_path {str} -- path where .tflite32 model is stored (default: {''})
+        feat_extractor_output_layers {list} -- These are the indices 
+            of the feature map outputs in the model, 
+            defaults are recommended  (default: {[114, 157]})
+        mode {str} -- WIP To use if validation requires different transformations (default: {"train"})
+    
+    Returns:
+        [object] -- Feature extractor object that whose functions can be used to map over a 
+        tensorflow dataset of filepaths
+    """
 
         self.chan_means = chan_means
         self.chan_std_dev = chan_std_dev
@@ -439,10 +483,10 @@ class DeepFakeLoadExtractFeatures(object):
         self.seq_length = seq_length
         self.mode = mode
         self.reader = VideoReader()
-        self.efficientnet_extractor = EfficientNetLite(path=feat_extractor_path, 
-                                      output_layer_ind=feat_extractor_output_layer)
+        self.efficientnet_extractor = BlazefaceNetLite(path=feat_extractor_path, 
+                                      output_layer_inds=feat_extractor_output_layers)
         
-        self.frame_feature_shapes = self.efficientnet_extractor.get_output_shapes()[1:]
+        self.frame_feature_shapes = self.efficientnet_extractor.get_output_shapes()
         
     def get_frames(self, fnames):
 
@@ -456,30 +500,24 @@ class DeepFakeLoadExtractFeatures(object):
         
         
         # Counts should be equal between real and fakes
-        real_frame_count = int(real_capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        fake_frame_count = int(fake_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_count = int(fake_capture.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        if num_frames != 300:
-            # Base inds on same frame grab to use matching video frames
-            start = np.random.randint(real_frame_count-num_frames)
+        # Useful if loading total video size
+        if frame_count < num_frames:
+            num_frames = frame_count
+        
+        # Base inds on same frame grab to use matching video frames
+        start = np.random.randint(frame_count-num_frames)
+        frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int)
+        
+        real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, frame_idxs)
 
-            frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int, endpoint=False)
-            
-            real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, frame_idxs)
-            fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, frame_idxs)
+        if np.random.choice([0,1], p=[0.9, 0.1]) == 1:
+            # Throw an easy differable example randomly
+            start = np.random.randint(frame_count-num_frames)
+            frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int)
 
-        else:
-            real_frame_idxs = np.linspace(0, real_frame_count, 
-                                     num=real_frame_count, 
-                                     dtype=np.int,
-                                     endpoint=False)
-            fake_frame_idxs = np.linspace(0, fake_frame_count, 
-                                     num=fake_frame_count, 
-                                     dtype=np.int,
-                                     endpoint=False)
-
-            real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, real_frame_idxs)
-            fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, fake_frame_idxs)
+        fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, frame_idxs)
         
         real_capture.release()
         fake_capture.release()
@@ -498,8 +536,10 @@ class DeepFakeLoadExtractFeatures(object):
             [tf.Tensor] -- normalized video data
         """
         
-        video -= chan_means
-        video /= chan_std_dev
+        # video -= chan_means
+        # video /= chan_std_dev
+        video /= 127.5
+        video -= 1.0
 
         return video
     
@@ -529,29 +569,184 @@ class DeepFakeLoadExtractFeatures(object):
         
         rvid, fvid = self.transform_vid(filenames)
         
-        real_output_seq = np.empty((self.seq_length, *self.frame_feature_shapes), dtype=np.float32)
-        fake_output_seq = np.empty((self.seq_length, *self.frame_feature_shapes), dtype=np.float32)
+        real_output16 = np.empty((self.seq_length, *self.frame_feature_shapes[0]), dtype=np.float32)
+        fake_output16 = np.empty((self.seq_length, *self.frame_feature_shapes[0]), dtype=np.float32)
+        
+        real_output8 = np.empty((self.seq_length, *self.frame_feature_shapes[1]), dtype=np.float32)
+        fake_output8 = np.empty((self.seq_length, *self.frame_feature_shapes[1]), dtype=np.float32)
         
         for i in range(self.seq_length):
             
-            real_output_seq[i] = self.efficientnet_extractor.\
-                                      extract_from_image(tf.reshape(rvid[i], 
-                                                        (1, *self.resize_shape, 3)))
-            fake_output_seq[i] = self.efficientnet_extractor.\
-                                      extract_from_image(tf.reshape(fvid[i], 
-                                                        (1, *self.resize_shape, 3)))
+            real_output16[i], real_output8[i] = self.efficientnet_extractor.\
+                                                extract_from_image(tf.reshape(rvid[i], 
+                                                (1, *self.resize_shape, 3)))
+            
+            fake_output16[i], fake_output8[i] = self.efficientnet_extractor.\
+                                                extract_from_image(tf.reshape(fvid[i], 
+                                                (1, *self.resize_shape, 3)))
         del rvid, fvid
         gc.collect()
-        return tf.stack((real_output_seq, fake_output_seq))
+        
+        out = (tf.stack((real_output16, fake_output16)), tf.stack((real_output8, fake_output8)))
+        return out
     
     def transform_map(self, x):
-        result_tensor = tf.py_function(func=self.extract_features,
+        results16, results8 = tf.py_function(func=self.extract_features,
                                         inp=[x],
-                                        Tout=[tf.float32])
-        # Convention is that result_tensor[0] = real_vid, result_tensor[1] = fake_vid
-        result_tensor[0].set_shape((2,None,None,None,None))
+                                        Tout=[tf.float32, tf.float32])
+        # Convention is 
+        # result_tensor.set_shape((2,None,None,None,None))
         labels = tf.constant([[0.0], [1.0]])
-        return result_tensor[0], labels
+        return results16, results8, labels
+
+class DeepFakeLoadExtractFeaturesV2(object):
+    def __init__(self, chan_means=[0.485*255, 0.456*255, 0.406*255],
+                       chan_std_dev=[0.229*255, 0.224*255, 0.225*255],
+                       resize_shape=(300,300),
+                       seq_length=298,
+                       feat_extractor_path='',
+                       feat_extractor_output_layers=[114, 157],
+                       mode="train"):
+        """[summary]
+        
+        Keyword Arguments:
+            chan_means {list} -- [description] (default: {[0.485, 0.456, 0.406]})
+            chan_std_dev {list} -- [description] (default: {[0.229, 0.224, 0.225]})
+            resize_shape {tuple} -- [description] (default: {(300,300)})
+            seq_length {int} -- [description] (default: {298})
+            mode {str} -- [description] (default: {"train"})
+        """
+
+        self.chan_means = chan_means
+        self.chan_std_dev = chan_std_dev
+        self.resize_shape = resize_shape
+        self.seq_length = seq_length
+        self.mode = mode
+        self.reader = VideoReader()
+        self.efficientnet_extractor = BlazefaceNetLite(path=feat_extractor_path, 
+                                      output_layer_inds=feat_extractor_output_layers)
+        
+        self.frame_feature_shapes = self.efficientnet_extractor.get_output_shapes()
+        
+    def get_frames(self, fnames):
+
+        num_frames = self.seq_length
+        
+        real = fnames.numpy()[0].decode('utf-8')
+        fake = fnames.numpy()[1].decode('utf-8')
+        
+        real_capture = cv2.VideoCapture(real)
+        fake_capture = cv2.VideoCapture(fake)
+        
+        
+        # Counts should be equal between real and fakes
+        frame_count = int(fake_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # Useful if loading total video size
+        if frame_count < num_frames:
+            num_frames = frame_count
+        
+        # Base inds on same frame grab to use matching video frames
+        start = np.random.randint(frame_count-num_frames)
+        frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int)
+        
+        real_vid, _ = self.reader._read_frames_at_indices(real, real_capture, frame_idxs)
+
+        if np.random.choice([0,1], p=[0.9, 0.1]) == 1:
+            # Throw an easy differable example randomly
+            start = np.random.randint(frame_count-num_frames)
+            frame_idxs = np.linspace(start, start+num_frames, num=num_frames, dtype=np.int)
+
+        fake_vid, _ = self.reader._read_frames_at_indices(fake, fake_capture, frame_idxs)
+        
+        real_capture.release()
+        fake_capture.release()
+        
+        return real_vid, fake_vid
+    
+    def normalize(self, video, chan_means, chan_std_dev):
+        """[summary]
+
+        Arguments:
+            video {tf.Tensor} -- tensorflow reshaped video data
+            chan_means {array} -- [description]
+            chan_std_dev {array} -- [description]
+
+        Returns:
+            [tf.Tensor] -- normalized video data
+        """
+        
+        # video -= chan_means
+        # video /= chan_std_dev
+        video /= 127.5
+        video -= 1.0
+
+        return video
+    
+    def transform_vid(self, filenames):
+
+        
+        chan_means = self.chan_means
+        chan_std_dev = self.chan_std_dev
+        resize_shape = self.resize_shape
+        
+        # For kaggle only
+        # fname = parts[-1].numpy().decode('utf-8')
+        # global filelog
+        # filelog.append(fname)
+        
+        real_vid, fake_vid = self.get_frames(filenames)
+        
+
+        real_vid = tf.image.resize(real_vid, size=resize_shape)
+        fake_vid = tf.image.resize(fake_vid, size=resize_shape)
+        real_vid = self.normalize(real_vid, chan_means, chan_std_dev)
+        fake_vid = self.normalize(fake_vid, chan_means, chan_std_dev)
+
+        return real_vid, fake_vid
+    
+    def extract_features(self, videos):
+        
+        rvid, fvid = videos[0], videos[1]
+        
+        real_output16 = np.empty((self.seq_length, *self.frame_feature_shapes[0]), dtype=np.float32)
+        fake_output16 = np.empty((self.seq_length, *self.frame_feature_shapes[0]), dtype=np.float32)
+        
+        real_output8 = np.empty((self.seq_length, *self.frame_feature_shapes[1]), dtype=np.float32)
+        fake_output8 = np.empty((self.seq_length, *self.frame_feature_shapes[1]), dtype=np.float32)
+        
+        for i in range(self.seq_length):
+            
+            real_output16[i], real_output8[i] = self.efficientnet_extractor.\
+                                                extract_from_image(tf.reshape(rvid[i], 
+                                                (1, *self.resize_shape, 3)))
+            
+            fake_output16[i], fake_output8[i] = self.efficientnet_extractor.\
+                                                extract_from_image(tf.reshape(fvid[i], 
+                                                (1, *self.resize_shape, 3)))
+        del rvid, fvid
+        gc.collect()
+        
+        out = (tf.stack((real_output16, fake_output16)), tf.stack((real_output8, fake_output8)))
+        return out
+    
+    def load_videos_map(self, x):
+        # Loading map function for parallel loading call
+
+        real_vid, fake_vid = tf.py_function(func=self.transform_vid,
+                                inp=[x],
+                                Tout=[tf.float32, tf.float32])
+        return tf.stack((real_vid, fake_vid))
+
+
+    def extract_feats_map(self, x):
+        results16, results8 = tf.py_function(func=self.extract_features,
+                                        inp=[x],
+                                        Tout=[tf.float32, tf.float32])
+        # Convention is 
+        # result_tensor.set_shape((2,None,None,None,None))
+        labels = tf.constant([[0.0], [1.0]])
+        return results16, results8, labels
 
 
 class ExtractedFeatureLoader():
