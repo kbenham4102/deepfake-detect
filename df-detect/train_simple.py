@@ -265,8 +265,8 @@ if __name__ == "__main__":
     final_model_path = f'models/{model_stamp}/model.h5'
 
     # Use `model_stamp` variable if new model is desired, otherwise enter manually
-    checkpoint_prefix = f'models/{model_stamp}/'
-    # checkpoint_prefix = 'models/202032811529_bzface_model_0.2_drop/'
+    # checkpoint_prefix = f'models/{model_stamp}/'
+    checkpoint_prefix = 'models/202032811529_bzface_model_0.2_drop/'
     # Define dummy test dims based on parameters
     test_dims = (None, None, *resize_shape, 3)
 

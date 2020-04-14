@@ -459,24 +459,23 @@ class DeepFakeLoadExtractFeatures(object):
                        feat_extractor_path='',
                        feat_extractor_output_layers=[114, 157],
                        mode="train"):
-    """[summary]
-    
-    Keyword Arguments:
-        chan_means {list} -- unused for blazeface (default: {[0.485*255, 0.456*255, 0.406*255]})
-        chan_std_dev {list} -- unused for blazeface (default: {[0.229*255, 0.224*255, 0.225*255]})
-        resize_shape {tuple} -- shape to resize all frames by, blazeface uses (default: {(128,128)})
-        seq_length {int} -- number of frames to use (default: {64})
-        feat_extractor_path {str} -- path where .tflite32 model is stored (default: {''})
-        feat_extractor_output_layers {list} -- These are the indices 
-            of the feature map outputs in the model, 
-            defaults are recommended  (default: {[114, 157]})
-        mode {str} -- WIP To use if validation requires different transformations (default: {"train"})
-    
-    Returns:
-        [object] -- Feature extractor object that whose functions can be used to map over a 
-        tensorflow dataset of filepaths
-    """
-
+        """[summary]
+        
+        Keyword Arguments:
+            chan_means {list} -- unused for blazeface (default: {[0.485*255, 0.456*255, 0.406*255]})
+            chan_std_dev {list} -- unused for blazeface (default: {[0.229*255, 0.224*255, 0.225*255]})
+            resize_shape {tuple} -- shape to resize all frames by, blazeface uses (default: {(128,128)})
+            seq_length {int} -- number of frames to use (default: {64})
+            feat_extractor_path {str} -- path where .tflite32 model is stored (default: {''})
+            feat_extractor_output_layers {list} -- These are the indices 
+                of the feature map outputs in the model, 
+                defaults are recommended  (default: {[114, 157]})
+            mode {str} -- WIP To use if validation requires different transformations (default: {"train"})
+        
+        Returns:
+            [object] -- Feature extractor object that whose functions can be used to map over a 
+            tensorflow dataset of filepaths
+        """
         self.chan_means = chan_means
         self.chan_std_dev = chan_std_dev
         self.resize_shape = resize_shape
