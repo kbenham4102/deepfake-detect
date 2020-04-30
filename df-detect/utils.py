@@ -70,7 +70,7 @@ def load_process_train_targets(meta_path, train_path, return_df = True):
     df = pd.read_json(meta_path)
     df['target_class'] = (df['label'] == 'FAKE').astype('float')
     df['filepath'] = df['index'].apply(lambda x: os.path.join(train_path, x))
-    df.drop(['index', 'original', 'label'], axis=1, inplace=True)
+    df.drop(['index', 'label'], axis=1, inplace=True)
     df.to_csv(meta_path + 'paths_labels.csv', header=True)
 
     if return_df == True:
