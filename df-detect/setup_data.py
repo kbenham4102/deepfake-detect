@@ -282,16 +282,16 @@ def extract_and_move_data():
     print("saved new json file ", json_loc)
 
     sort_deepfake_train_examples(download_folder, args.im_sort_path, json_loc, test_split=args.train_val_split)
-    return json_loc, args.im_sort_path
+    return json_loc, args.im_sort_path, args.lp
 
 if __name__== "__main__":
 
-    json_loc, data_head = extract_and_move_data()
+    json_loc, data_head, args.lp = extract_and_move_data()
     out_list = json_loc.split('/')[:-1]
     out_path = os.path.join(*out_list)
-
+    
     # Run a function to create a master list for matched originals and fakes
-    etl_save_pairs(json_loc, out_path, data_head=os.path.expanduser(data_head))
+    etl_save_pairs(json_loc, args.lp, data_head=os.path.expanduser(data_head))
 
 
 
